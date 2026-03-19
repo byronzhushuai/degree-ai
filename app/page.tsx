@@ -171,9 +171,20 @@ export default function Home() {
             <div style={{ fontSize: 13, color: '#555', marginBottom: 12 }}>
               Get your complete course list, prerequisite map, and fastest path to graduation — reviewed by an academic advisor.
             </div>
-            <button style={{ padding: '10px 20px', fontSize: 14, fontWeight: 600, background: '#000', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}>
-              Get full plan — $19
-            </button>
+            <button
+  onClick={async () => {
+    const res = await fetch('/api/checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: 'basic' }),
+    });
+    const data = await res.json();
+    if (data.url) window.location.href = data.url;
+  }}
+  style={{ padding: '10px 20px', fontSize: 14, fontWeight: 600, background: '#000', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}
+>
+  Get full plan — $19
+</button>
           </div>
         </div>
       )}
