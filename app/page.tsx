@@ -7,6 +7,31 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fileName, setFileName] = useState('');
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.text) {
+        setTranscriptText(data.text);
+      } else {
+        setError('Failed to read PDF. Please paste text manually.');
+      }
+    } catch {
+      setError('Failed to upload file.');
+    }
+  };
 
   const handleAnalyze = async () => {
     if (!transcriptText.trim()) return;
@@ -37,22 +62,29 @@ export default function Home() {
     <main style={{ maxWidth: 720, margin: '0 auto', padding: '48px 24px', fontFamily: 'sans-serif' }}>
       <h1 style={{ fontSize: 28, fontWeight: 600, marginBottom: 8 }}>Degree AI</h1>
       <p style={{ color: '#666', marginBottom: 32 }}>
-        Paste your degree audit or transcript below. Our AI will identify your graduation gaps instantly.
+        Upload your degree audit or transcript. Our AI will identify your graduation gaps instantly.
       </p>
+
+      <div style={{ marginBottom: 16 }}>
+        <label style={{
+          display: 'inline-block', padding: '10px 20px', background: '#f5f5f5',
+          border: '1px solid #ddd', borderRadius: 8, cursor: 'pointer', fontSize: 14
+        }}>
+          Upload PDF
+          <input type="file" accept=".pdf" onChange={handleFileUpload} style={{ display: 'none' }} />
+        </label>
+        {fileName && <span style={{ marginLeft: 12, fontSize: 13, color: '#666' }}>{fileName} — loaded</span>}
+      </div>
+
+      <p style={{ fontSize: 13, color: '#999', marginBottom: 8 }}>Or paste your transcript text directly:</p>
 
       <textarea
         value={transcriptText}
         onChange={(e) => setTranscriptText(e.target.value)}
         placeholder="Paste your degree audit or transcript text here..."
         style={{
-          width: '100%',
-          height: 200,
-          padding: 12,
-          fontSize: 14,
-          border: '1px solid #ddd',
-          borderRadius: 8,
-          resize: 'vertical',
-          boxSizing: 'border-box',
+          width: '100%', height: 200, padding: 12, fontSize: 14,
+          border: '1px solid #ddd', borderRadius: 8, resize: 'vertical', boxSizing: 'border-box',
         }}
       />
 
@@ -60,15 +92,9 @@ export default function Home() {
         onClick={handleAnalyze}
         disabled={loading || !transcriptText.trim()}
         style={{
-          marginTop: 12,
-          padding: '12px 24px',
-          fontSize: 15,
-          fontWeight: 600,
-          background: loading ? '#999' : '#000',
-          color: '#fff',
-          border: 'none',
-          borderRadius: 8,
-          cursor: loading ? 'not-allowed' : 'pointer',
+          marginTop: 12, padding: '12px 24px', fontSize: 15, fontWeight: 600,
+          background: loading ? '#999' : '#000', color: '#fff',
+          border: 'none', borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer',
         }}
       >
         {loading ? 'Analyzing...' : 'Analyze my degree — Free'}
@@ -132,9 +158,7 @@ export default function Home() {
             </div>
           )}
 
-          <div style={{
-            border: '1px solid #0070f3', borderRadius: 8, padding: 20, background: '#f0f7ff'
-          }}>
+          <div style={{ border: '1px solid #0070f3', borderRadius: 8, padding: 20, background: '#f0f7ff' }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: '#0070f3', marginBottom: 4 }}>
               Want the full optimization plan?
             </div>
