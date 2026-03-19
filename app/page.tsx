@@ -73,7 +73,7 @@ export default function Home() {
         Upload your documents below. Our AI will identify your graduation gaps instantly.
       </p>
       <p style={{ fontSize: 12, color: '#999', marginBottom: 32 }}>
-        Your files are processed securely and never stored. All data is deleted after analysis in accordance with FERPA and CCPA.
+      Your files are processed securely and never stored. All data is deleted after analysis in accordance with FERPA and applicable state privacy laws.
       </p>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
