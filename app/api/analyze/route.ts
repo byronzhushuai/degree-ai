@@ -51,7 +51,11 @@ ${transcriptText}`,
   }
 
   try {
-    const analysis = JSON.parse(result.text);
+    const cleaned = result.text
+      .replace(/```json\n?/g, '')
+      .replace(/```\n?/g, '')
+      .trim();
+    const analysis = JSON.parse(cleaned);
     return NextResponse.json({ analysis });
   } catch {
     return NextResponse.json({ rawAnalysis: result.text });
