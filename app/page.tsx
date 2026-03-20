@@ -1,6 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { createClient } from '@/utils/supabase/client';
+import type { User } from '@supabase/supabase-js';
 
 export default function Home() {
   const [degreeAuditText, setDegreeAuditText] = useState('');
@@ -10,6 +13,19 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [user, setUser] = useState<User | null | undefined>(undefined);
+
+  useEffect(() => {
+    createClient()
+      .auth.getUser()
+      .then(({ data }) => setUser(data.user ?? null));
+  }, []);
+
+  const handleSignOut = async () => {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    setUser(null);
+  };
 
   const handleFileUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -68,6 +84,53 @@ export default function Home() {
 
   return (
     <main style={{ maxWidth: 720, margin: '0 auto', padding: '48px 24px', fontFamily: 'sans-serif' }}>
+      <nav
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 24,
+        }}
+      >
+        <Link href="/" style={{ fontSize: 14, fontWeight: 700, color: '#000', textDecoration: 'none' }}>
+          Degree AI
+        </Link>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {user ? (
+            <>
+              <span style={{ fontSize: 13, color: '#666' }}>{user.email}</span>
+              <Link href="/dashboard" style={{ fontSize: 13, color: '#0070f3', textDecoration: 'none' }}>
+                Dashboard
+              </Link>
+              <button
+                type="button"
+                onClick={handleSignOut}
+                style={{
+                  padding: '8px 12px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  border: '1px solid #ddd',
+                  borderRadius: 8,
+                  background: '#fff',
+                  cursor: 'pointer',
+                }}
+              >
+                Sign out
+              </button>
+            </>
+          ) : (
+            <>
+              <Link href="/login" style={{ fontSize: 13, color: '#0070f3', textDecoration: 'none' }}>
+                Log in
+              </Link>
+              <Link href="/signup" style={{ fontSize: 13, color: '#0070f3', textDecoration: 'none' }}>
+                Sign up
+              </Link>
+            </>
+          )}
+        </div>
+      </nav>
+
       <h1 style={{ fontSize: 28, fontWeight: 600, marginBottom: 8 }}>Degree AI</h1>
       <p style={{ color: '#666', marginBottom: 8 }}>
         Upload your documents below. Our AI will identify your graduation gaps instantly.
