@@ -73,7 +73,7 @@ export default function Home() {
         Upload your documents below. Our AI will identify your graduation gaps instantly.
       </p>
       <p style={{ fontSize: 12, color: '#999', marginBottom: 32 }}>
-      Your files are processed securely and never stored. All data is deleted after analysis in accordance with FERPA and applicable state privacy laws.
+        Your files are processed securely and never stored. All data is deleted after analysis in accordance with FERPA and CCPA.
       </p>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
@@ -172,15 +172,15 @@ export default function Home() {
               Get your complete course list, prerequisite map, and fastest path to graduation — reviewed by an academic advisor.
             </div>
             <button
-  onClick={async () => {
-    const res = await fetch('/api/checkout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plan: 'basic' }),
-    });
-    const data = await res.json();
-    if (data.url) window.location.href = data.url;
-  }}
+onClick={async () => {
+  const res = await fetch('/api/checkout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plan: 'basic', analysisData: analysis }),
+  });
+  const data = await res.json();
+  if (data.url) window.location.href = data.url;
+}}
   style={{ padding: '10px 20px', fontSize: 14, fontWeight: 600, background: '#000', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}
 >
   Get full plan — $19

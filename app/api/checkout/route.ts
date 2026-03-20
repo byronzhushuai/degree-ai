@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 export async function POST(request: NextRequest) {
-  const { plan } = await request.json();
+  const { plan, analysisData } = await request.json();
 
   const priceMap: Record<string, number> = {
     basic: 1900,
@@ -34,8 +34,11 @@ export async function POST(request: NextRequest) {
       },
     ],
     mode: 'payment',
-    success_url: `${request.headers.get('origin')}/success`,
+    success_url: `${request.headers.get('origin')}/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${request.headers.get('origin')}/`,
+    metadata: {
+      analysisData: JSON.stringify(analysisData).slice(0, 500),
+    },
   });
 
   return NextResponse.json({ url: session.url });
