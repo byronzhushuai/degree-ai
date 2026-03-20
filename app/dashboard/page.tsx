@@ -52,12 +52,15 @@ export default async function DashboardPage() {
   return (
     <main className="mx-auto min-h-screen max-w-3xl px-6 py-10">
       <header className="mb-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-            {user.email}
-          </p>
-        </div>
+      <div>
+  <a href="/" className="mb-2 inline-flex items-center gap-1 text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
+    ← Back to home
+  </a>
+  <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+  <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+    {user.email}
+  </p>
+</div>
         <form action={signOut}>
           <button
             type="submit"
