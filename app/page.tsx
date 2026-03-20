@@ -236,6 +236,15 @@ export default function Home() {
             </div>
             <button
 onClick={async () => {
+  // 先把分析数据存进 sessionStorage
+  sessionStorage.setItem('degree_ai_paid_report', JSON.stringify({
+    ...analysis,
+    plan: 'basic',
+    full_report: JSON.stringify(analysis),
+    preview_text: analysis.freeInsight ?? '',
+    file_name: degreeAuditFileName || 'Degree report',
+  }));
+
   const res = await fetch('/api/checkout', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

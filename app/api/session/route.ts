@@ -12,15 +12,17 @@ export async function GET(request: NextRequest) {
 
   try {
     const session = await stripe.checkout.sessions.retrieve(sessionId);
-    const analysisData = session.metadata?.analysisData;
-
-    if (!analysisData) {
-      return NextResponse.json({ error: 'No analysis data' }, { status: 404 });
+    
+    if (session.payment_status !== 'paid') {
+      return NextResponse.json({ error: 'Payment not completed' }, { status: 402 });
     }
 
-    const analysis = JSON.parse(analysisData);
-    return NextResponse.json({ analysis });
-  } catch {
-    return NextResponse.json({ error: 'Failed to retrieve session' }, { status: 500 });
+    return NextResponse.json({ 
+      paid: true,
+      plan: session.metadata?.plan ?? 'basic',
+    });
+  } catch (err) {
+    console.error('Session API error:', err);
+    return NextResponse.json({ error: 'Failed to retrieve session', detail: String(err) }, { status: 500 });
   }
 }

@@ -80,7 +80,13 @@ function SuccessContent() {
     fetch('/api/session?session_id=' + sessionId)
       .then((r) => r.json())
       .then((data) => {
-        if (data.analysis) setAnalysis(data.analysis as Record<string, unknown>);
+        if (data.paid) {
+          // 从 sessionStorage 读报告数据
+          try {
+            const raw = sessionStorage.getItem('degree_ai_paid_report');
+            if (raw) setAnalysis(JSON.parse(raw) as Record<string, unknown>);
+          } catch { /* ignore */ }
+        }
         setLoading(false);
       });
   }, [sessionId]);
@@ -102,13 +108,13 @@ function SuccessContent() {
       setSaveState('saving');
       setSaveError('');
       const supabase = createClient();
-      const { error } = await supabase.from('reports').insert({
+      const { data: insertData, error } = await supabase.from('reports').insert({
         user_id: user.id,
         file_name: payload.file_name,
         preview_text: payload.preview_text,
         full_report: payload.full_report,
         plan: payload.plan,
-      });
+      }).select().single();
       if (cancelled) return;
       if (error) {
         setSaveState('error');
@@ -116,8 +122,22 @@ function SuccessContent() {
         saveStarted.current = false;
         return;
       }
-      setSaveState('saved');
-      if (typeof window !== 'undefined') sessionStorage.setItem(storageKey, '1');
+setSaveState('saved');
+if (typeof window !== 'undefined') sessionStorage.setItem(storageKey, '1');
+
+
+// 发邮件通知
+if (user.email) {
+  fetch('/api/send-email', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      toEmail: user.email,
+      reportId: insertData?.id,    // Supabase insert 返回的报告 ID
+      userName: user.email,
+    }),
+  }).catch(console.error);    // 发邮件失败不影响主流程
+}
     })();
 
     return () => {
