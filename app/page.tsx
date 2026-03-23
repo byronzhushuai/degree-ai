@@ -1,20 +1,18 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { createClient } from '@/utils/supabase/client';
 import type { User } from '@supabase/supabase-js';
 
 export default function Home() {
   const [degreeAuditText, setDegreeAuditText] = useState('');
-  const [transcriptText, setTranscriptText] = useState('');
   const [degreeAuditFileName, setDegreeAuditFileName] = useState('');
-  const [transcriptFileName, setTranscriptFileName] = useState('');
-  const [analysis, setAnalysis] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const [error, setError] = useState('');
   const [user, setUser] = useState<User | null | undefined>(undefined);
-  const uploadRef = useRef<HTMLDivElement>(null);
+  const [howOpen, setHowOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     createClient()
@@ -23,34 +21,36 @@ export default function Home() {
   }, []);
 
   const handleSignOut = async () => {
-    const supabase = createClient();
-    await supabase.auth.signOut();
+    await createClient().auth.signOut();
     setUser(null);
   };
 
-  const handleFileUpload = async (
-    e: React.ChangeEvent<HTMLInputElement>,
-    type: 'degreeAudit' | 'transcript'
-  ) => {
-    const file = e.target.files?.[0];
+  const handleFileUpload = async (file: File) => {
     if (!file) return;
-    if (type === 'degreeAudit') setDegreeAuditFileName(file.name);
-    else setTranscriptFileName(file.name);
+    setDegreeAuditFileName(file.name);
+    setScanning(true);
+    setDegreeAuditText('');
 
     const formData = new FormData();
     formData.append('file', file);
+
+    // 2.5s perceived scan delay, then upload
+    await new Promise(resolve => setTimeout(resolve, 2500));
 
     try {
       const res = await fetch('/api/upload', { method: 'POST', body: formData });
       const data = await res.json();
       if (data.text) {
-        if (type === 'degreeAudit') setDegreeAuditText(data.text);
-        else setTranscriptText(data.text);
+        setDegreeAuditText(data.text);
       } else {
-        setError('Failed to read PDF. Please paste text manually.');
+        setError('Failed to read PDF. Please try again.');
+        setDegreeAuditFileName('');
       }
     } catch {
       setError('Failed to upload file.');
+      setDegreeAuditFileName('');
+    } finally {
+      setScanning(false);
     }
   };
 
@@ -58,21 +58,29 @@ export default function Home() {
     if (!degreeAuditText.trim()) return;
     setLoading(true);
     setError('');
-    setAnalysis(null);
-
-    const combinedText = transcriptText
-      ? 'DEGREE AUDIT:\n' + degreeAuditText + '\n\nTRANSCRIPT:\n' + transcriptText
-      : 'DEGREE AUDIT:\n' + degreeAuditText;
 
     try {
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcriptText: combinedText }),
+        body: JSON.stringify({ transcriptText: 'DEGREE AUDIT:\n' + degreeAuditText }),
       });
       const data = await res.json();
       if (data.analysis) {
-        setAnalysis(data.analysis);
+        sessionStorage.setItem('degree_ai_paid_report', JSON.stringify({
+          ...data.analysis,
+          plan: 'basic',
+          full_report: JSON.stringify(data.analysis),
+          preview_text: data.analysis.freeInsight ?? '',
+          file_name: degreeAuditFileName || 'Degree report',
+        }));
+        const checkoutRes = await fetch('/api/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plan: 'basic', analysisData: data.analysis }),
+        });
+        const checkoutData = await checkoutRes.json();
+        if (checkoutData.url) window.location.href = checkoutData.url;
       } else {
         setError('Analysis failed. Please try again.');
       }
@@ -83,391 +91,220 @@ export default function Home() {
     }
   };
 
-  const scrollToUpload = () => {
-    uploadRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
+  const dzBg = scanning || degreeAuditFileName ? '#EFF6FF' : '#fff';
+  const dzBorder = scanning || degreeAuditFileName ? '1.5px solid #2563EB' : '1.5px dashed #CBD5E1';
+  const ctaDisabled = loading || scanning || !degreeAuditText.trim();
 
   return (
-    <main style={{ fontFamily: 'sans-serif', color: '#111' }}>
+    <div style={{ maxWidth: 680, margin: '0 auto', fontFamily: 'system-ui,-apple-system,sans-serif', background: '#fff', color: '#0F172A' }}>
 
-      {/* ── Navbar ── */}
-      <nav style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '16px 32px',
-        borderBottom: '1px solid #eee',
-        position: 'sticky',
-        top: 0,
-        background: '#fff',
-        zIndex: 100,
-      }}>
-        <Link href="/" style={{ fontSize: 16, fontWeight: 700, color: '#000', textDecoration: 'none', letterSpacing: '-0.3px' }}>
-          Degree<span style={{ color: '#0070f3' }}>AI</span>
-        </Link>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+      <style>{`
+        @keyframes tagBlink{0%,100%{opacity:1}50%{opacity:.25}}
+        @keyframes scanLine{0%{top:0}100%{top:100%}}
+        @keyframes ticker{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+        .scan-bar{position:absolute;top:0;left:0;width:100%;height:2px;background:linear-gradient(90deg,transparent,#2563EB,transparent);opacity:0;}
+        .scan-bar.active{animation:scanLine 2s linear infinite;opacity:.5;}
+        .ticker-track{display:flex;gap:28px;animation:ticker 28s linear infinite;white-space:nowrap;}
+      `}</style>
+
+      {/* NAV */}
+      <nav style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'14px 24px', background:'rgba(255,255,255,0.95)', backdropFilter:'blur(8px)', borderBottom:'1px solid #E2E8F0', position:'sticky', top:0, zIndex:100 }}>
+        <div style={{ fontSize:17, fontWeight:800, letterSpacing:-0.5 }}>
+          Degree<em style={{ color:'#2563EB', fontStyle:'normal' }}>AI</em>
+        </div>
+        <div style={{ display:'flex', gap:8 }}>
           {user ? (
             <>
-              <span style={{ fontSize: 13, color: '#666' }}>{user.email}</span>
-              <Link href="/dashboard" style={{ fontSize: 13, color: '#0070f3', textDecoration: 'none', fontWeight: 500 }}>
-                Dashboard
-              </Link>
-              <button
-                type="button"
-                onClick={handleSignOut}
-                style={{ padding: '7px 14px', fontSize: 13, fontWeight: 500, border: '1px solid #ddd', borderRadius: 8, background: '#fff', cursor: 'pointer' }}
-              >
-                Sign out
-              </button>
+              <span style={{ fontSize:13, color:'#64748B', alignSelf:'center' }}>{user.email}</span>
+              <button onClick={handleSignOut} style={{ fontSize:13, fontWeight:600, color:'#64748B', background:'none', border:'none', cursor:'pointer' }}>Sign out</button>
             </>
           ) : (
             <>
-              <Link href="/login" style={{ fontSize: 13, color: '#444', textDecoration: 'none' }}>Log in</Link>
-              <Link href="/signup" style={{ fontSize: 13, fontWeight: 600, color: '#fff', background: '#000', padding: '8px 16px', borderRadius: 8, textDecoration: 'none' }}>
-                Sign up free
-              </Link>
+              <button onClick={() => window.location.href='/login'} style={{ fontSize:13, fontWeight:600, color:'#64748B', background:'none', border:'none', cursor:'pointer' }}>Log in</button>
+              <button onClick={() => window.location.href='/signup'} style={{ background:'#0F172A', color:'#fff', border:'none', borderRadius:7, padding:'8px 14px', fontSize:13, fontWeight:700, cursor:'pointer' }}>Sign up free</button>
             </>
           )}
         </div>
       </nav>
 
-      {/* ── Hero ── */}
-      <section style={{
-        maxWidth: 760,
-        margin: '0 auto',
-        padding: '80px 24px 64px',
-        textAlign: 'center',
-      }}>
-        <div style={{
-          display: 'inline-block',
-          fontSize: 12,
-          fontWeight: 600,
-          color: '#0070f3',
-          background: '#e8f0fe',
-          padding: '4px 12px',
-          borderRadius: 20,
-          marginBottom: 20,
-          letterSpacing: '0.5px',
-          textTransform: 'uppercase',
-        }}>
-          Free AI Degree Analysis
+      {/* HERO */}
+      <section style={{ padding:'52px 24px 40px', textAlign:'center', borderBottom:'1px solid #E2E8F0' }}>
+
+        {/* Tag */}
+        <div style={{ display:'inline-flex', alignItems:'center', gap:7, fontSize:11, fontWeight:700, color:'#2563EB', background:'#EFF6FF', border:'1px solid #DBEAFE', padding:'5px 13px', borderRadius:20, marginBottom:22, letterSpacing:0.5, textTransform:'uppercase' }}>
+          <div style={{ width:6, height:6, borderRadius:'50%', background:'#2563EB', flexShrink:0, animation:'tagBlink 1.4s infinite' }} />
+          Registration season is now
         </div>
-        <h1 style={{
-          fontSize: 'clamp(32px, 5vw, 52px)',
-          fontWeight: 700,
-          lineHeight: 1.15,
-          letterSpacing: '-1px',
-          marginBottom: 20,
-          color: '#0a0a0a',
-        }}>
-          Find out exactly what's standing between you and graduation
+
+        {/* Headline */}
+        <h1 style={{ fontSize:40, fontWeight:900, lineHeight:1.05, letterSpacing:-2, color:'#0F172A', marginBottom:6 }}>
+          Nearly <span style={{ color:'#E11D48' }}>half</span> of college students<br />don&apos;t graduate in 4 years.
         </h1>
-        <p style={{ fontSize: 18, color: '#555', lineHeight: 1.6, maxWidth: 560, margin: '0 auto 36px' }}>
-          Upload your degree audit. Our AI identifies missing requirements, at-risk courses, and your fastest path to graduation — in under 30 seconds.
+        <div style={{ width:40, height:3, background:'#E11D48', borderRadius:2, margin:'16px auto' }} />
+        <p style={{ fontSize:16, color:'#64748B', lineHeight:1.65, maxWidth:420, margin:'0 auto 10px', fontWeight:500 }}>
+          Find out if you&apos;re on track — <strong style={{ color:'#0F172A' }}>free.</strong><br />
+          Upload your degree audit and see every gap, blocker, and risk in 30 seconds.
         </p>
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <button
-            onClick={scrollToUpload}
-            style={{
-              padding: '14px 28px',
-              fontSize: 15,
-              fontWeight: 700,
-              background: '#000',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 10,
-              cursor: 'pointer',
-              letterSpacing: '-0.2px',
-            }}
-          >
-            Analyze my degree — Free →
-          </button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#666' }}>
-            <span>🔒</span> No account required &nbsp;·&nbsp; Results in 30s
-          </div>
+        <p style={{ fontSize:13, color:'#64748B', marginBottom:24, fontStyle:'italic' }}>
+          Most students who find a problem here didn&apos;t know they had one.
+        </p>
+
+        {/* Trust line */}
+        <div style={{ fontSize:12, color:'#94A3B8', marginBottom:24, display:'flex', alignItems:'center', justifyContent:'center', gap:6, flexWrap:'wrap' }}>
+          <span>Analyzes your actual degree audit</span>
+          <div style={{ width:3, height:3, borderRadius:'50%', background:'#CBD5E1' }} />
+          <span>Not a generic checklist</span>
+          <div style={{ width:3, height:3, borderRadius:'50%', background:'#CBD5E1' }} />
+          <span>Real findings from your file</span>
         </div>
-      </section>
 
-      {/* ── Sample Report Preview ── */}
-      <section style={{ background: '#f7f8fa', padding: '56px 24px' }}>
-        <div style={{ maxWidth: 760, margin: '0 auto' }}>
-          <h2 style={{ fontSize: 22, fontWeight: 700, textAlign: 'center', marginBottom: 8, letterSpacing: '-0.4px' }}>
-            Here's what your report looks like
-          </h2>
-          <p style={{ fontSize: 14, color: '#888', textAlign: 'center', marginBottom: 32 }}>
-            Real output from a sample Computer Science degree audit
-          </p>
-
-          {/* Mock report card */}
-          <div style={{
-            background: '#fff',
-            borderRadius: 16,
-            border: '1px solid #e5e7eb',
-            overflow: 'hidden',
-            boxShadow: '0 4px 24px rgba(0,0,0,0.06)',
-          }}>
-            {/* Report header */}
-            <div style={{ padding: '20px 24px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#0a0a0a' }}>B.S. Computer Science</div>
-                <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>Spring 2025 · 94 credits completed</div>
-              </div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: '#22a722', background: '#f0fdf0', padding: '4px 10px', borderRadius: 20, border: '1px solid #bbf0bb' }}>
-                Analysis complete
-              </div>
-            </div>
-
-            {/* Stats */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0 }}>
-              {[
-                { label: 'Credits completed', value: '94 / 120', bg: '#fff', color: '#111', sub: '' },
-                { label: 'Missing requirements', value: '7', bg: '#fff8f8', color: '#c00', sub: '3 urgent' },
-                { label: 'At-risk courses', value: '2', bg: '#fffdf0', color: '#996600', sub: 'Check grades' },
-              ].map((stat, i) => (
-                <div key={i} style={{
-                  padding: '20px 20px',
-                  background: stat.bg,
-                  borderRight: i < 2 ? '1px solid #f0f0f0' : undefined,
-                }}>
-                  <div style={{ fontSize: 11, color: '#888', marginBottom: 6, fontWeight: 500 }}>{stat.label}</div>
-                  <div style={{ fontSize: 28, fontWeight: 700, color: stat.color, letterSpacing: '-0.5px' }}>{stat.value}</div>
-                  {stat.sub && <div style={{ fontSize: 11, color: stat.color, marginTop: 4, opacity: 0.8 }}>{stat.sub}</div>}
-                </div>
-              ))}
-            </div>
-
-            {/* AI Summary */}
-            <div style={{ padding: '16px 24px', background: '#f0f7ff', borderTop: '1px solid #e0ecff', borderBottom: '1px solid #e0ecff' }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#0070f3', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>AI Summary</div>
-              <div style={{ fontSize: 13, color: '#334', lineHeight: 1.6 }}>
-                You're 26 credits from graduation. Your most urgent gap is <strong>CS 401 (Senior Capstone)</strong> — it must be taken in sequence and requires CS 301 which you haven't completed yet. Recommend taking CS 301 this semester to stay on track for a Spring 2026 graduation.
-              </div>
-            </div>
-
-            {/* Missing courses preview */}
-            <div style={{ padding: '20px 24px' }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: '#444', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Missing courses (preview)</div>
-              {[
-                { code: 'CS 301', name: 'Algorithms & Data Structures', urgent: true },
-                { code: 'CS 350', name: 'Operating Systems', urgent: false },
-              ].map((c, i) => (
-                <div key={i} style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  padding: '10px 14px', background: '#f9f9f9', borderRadius: 8, marginBottom: 8,
-                }}>
-                  <span style={{ fontSize: 13, fontWeight: 500 }}>{c.code} — {c.name}</span>
-                  <span style={{
-                    fontSize: 11, padding: '3px 9px', borderRadius: 10, fontWeight: 600,
-                    background: c.urgent ? '#ffe0e0' : '#eee', color: c.urgent ? '#c00' : '#666',
-                  }}>
-                    {c.urgent ? '⚠ Urgent' : 'Required'}
-                  </span>
-                </div>
-              ))}
-              {/* Blurred rows */}
-              <div style={{ position: 'relative' }}>
-                <div style={{
-                  padding: '10px 14px', background: '#f9f9f9', borderRadius: 8, marginBottom: 8,
-                  filter: 'blur(4px)', userSelect: 'none', fontSize: 13,
-                }}>
-                  CS 401 — Senior Capstone Project
-                </div>
-                <div style={{
-                  padding: '10px 14px', background: '#f9f9f9', borderRadius: 8, marginBottom: 8,
-                  filter: 'blur(4px)', userSelect: 'none', fontSize: 13,
-                }}>
-                  MATH 320 — Linear Algebra
-                </div>
-                <div style={{
-                  position: 'absolute', inset: 0,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 13, fontWeight: 600, color: '#0070f3',
-                }}>
-                  + 5 more courses · Unlock for $19 →
-                </div>
-              </div>
-            </div>
-
-            <div style={{ padding: '0 24px 24px' }}>
-              <button
-                onClick={scrollToUpload}
-                style={{
-                  width: '100%', padding: '13px', fontSize: 14, fontWeight: 700,
-                  background: '#000', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer',
-                }}
-              >
-                Get this for your degree — Free
-              </button>
-            </div>
+        {/* Mini preview */}
+        <div style={{ background:'#F8FAFC', border:'1px solid #E2E8F0', borderRadius:12, padding:'14px 16px', marginBottom:20, textAlign:'left' }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+            <div style={{ fontSize:9, fontWeight:800, color:'#2563EB', textTransform:'uppercase', letterSpacing:0.8 }}>Example output</div>
+            <div style={{ fontSize:10, fontWeight:800, color:'#15803D', background:'#F0FDF4', border:'1px solid #BBF7D0', padding:'3px 10px', borderRadius:20 }}>All of this is free</div>
           </div>
-        </div>
-      </section>
-
-      {/* ── How it works ── */}
-      <section style={{ maxWidth: 760, margin: '0 auto', padding: '64px 24px' }}>
-        <h2 style={{ fontSize: 22, fontWeight: 700, textAlign: 'center', marginBottom: 48, letterSpacing: '-0.4px' }}>
-          Three steps, 30 seconds
-        </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 32 }}>
+          <div style={{ display:'flex', gap:8, marginBottom:10 }}>
+            {[['Credits done','94/120','#0F172A'],['Gaps found','7','#E11D48'],['Delay risk','+1 sem','#2563EB']].map(([l,v,c]) => (
+              <div key={l} style={{ flex:1, background:'#fff', border:'1px solid #E2E8F0', borderRadius:8, padding:'10px 12px' }}>
+                <div style={{ fontSize:9, color:'#64748B', marginBottom:3 }}>{l}</div>
+                <div style={{ fontSize:18, fontWeight:800, color:c, letterSpacing:-0.5 }}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ background:'#FFF1F2', border:'1px solid #FECACA', borderRadius:8, padding:'9px 12px', fontSize:12, color:'#881337', fontWeight:600, lineHeight:1.55, marginBottom:8 }}>
+            <strong style={{ color:'#E11D48' }}>CS 301 is blocking 3 required courses.</strong> If you don&apos;t register this semester, you can&apos;t graduate on time.
+          </div>
           {[
-            { step: '01', title: 'Upload your degree audit', desc: 'Export it as a PDF from your student portal. Takes 30 seconds.' },
-            { step: '02', title: 'AI scans your requirements', desc: 'Claude analyzes every requirement, completed course, and remaining gap.' },
-            { step: '03', title: 'Get your full plan', desc: 'See missing courses, risks, and the fastest path to your diploma.' },
-          ].map((item) => (
-            <div key={item.step}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#0070f3', letterSpacing: '1px', marginBottom: 10 }}>{item.step}</div>
-              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8, letterSpacing: '-0.2px' }}>{item.title}</div>
-              <div style={{ fontSize: 13, color: '#666', lineHeight: 1.6 }}>{item.desc}</div>
+            ['CS 301 — Algorithms','Blocks 3 required courses · Prereq red flag','blocker'],
+            ['WRIT 201 — Writing Elective','Hidden graduation requirement','hidden'],
+            ['CS 401 — Senior Capstone','Can\'t register until CS 301 is done','blocker'],
+          ].map(([name,sub,type]) => (
+            <div key={name} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 10px', background:'#fff', border:'1px solid #E2E8F0', borderRadius:7, marginBottom:6 }}>
+              <div>
+                <div style={{ fontSize:12, fontWeight:700, color:'#0F172A' }}>{name}</div>
+                <div style={{ fontSize:10, color:'#64748B', marginTop:1 }}>{sub}</div>
+              </div>
+              <div style={{ fontSize:9, fontWeight:800, color: type==='blocker'?'#E11D48':'#2563EB', background: type==='blocker'?'#FFF1F2':'#EFF6FF', border: `1px solid ${type==='blocker'?'#FECACA':'#DBEAFE'}`, padding:'2px 8px', borderRadius:4, textTransform:'uppercase', whiteSpace:'nowrap' }}>
+                {type==='blocker'?'Blocker':'Hidden req'}
+              </div>
             </div>
           ))}
+          <div style={{ fontSize:10, color:'#94A3B8', textAlign:'center', marginTop:4 }}>Sample only · your results reflect your actual file</div>
         </div>
-      </section>
 
-      {/* ── Upload Section ── */}
-      <section ref={uploadRef} style={{ background: '#f7f8fa', padding: '64px 24px' }}>
-        <div style={{ maxWidth: 720, margin: '0 auto' }}>
-          <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8, letterSpacing: '-0.4px' }}>
-            Analyze your degree
-          </h2>
-          <p style={{ color: '#666', marginBottom: 6, fontSize: 14 }}>
-            Upload your documents. Our AI identifies your graduation gaps instantly.
-          </p>
-          <p style={{ fontSize: 12, color: '#999', marginBottom: 28 }}>
-            🔒 Files are processed securely and never stored. Deleted after analysis (FERPA & CCPA compliant).
-          </p>
+        {/* Upload card */}
+        <div style={{ background:'#fff', border:'1px solid #E2E8F0', borderRadius:16, padding:20, boxShadow:'0 2px 20px rgba(0,0,0,0.07)', marginBottom:8 }}>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
-            <div style={{ border: '1px solid #ddd', borderRadius: 10, padding: 18, background: '#fff' }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
-                Degree Audit
-                <span style={{ marginLeft: 6, fontSize: 11, background: '#000', color: '#fff', padding: '1px 7px', borderRadius: 10 }}>Required</span>
+          {/* How-to accordion */}
+          <div style={{ marginBottom: howOpen ? 0 : 14 }}>
+            <button
+              onClick={() => setHowOpen(!howOpen)}
+              style={{ width:'100%', display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 14px', background:'#F8FAFC', border:'1px solid #E2E8F0', borderRadius: howOpen ? '8px 8px 0 0' : 8, cursor:'pointer', fontSize:12, fontWeight:600, color:'#2563EB', textAlign:'left', gap:8, fontFamily:'inherit' }}
+            >
+              Not sure where to find your degree audit?
+              <span style={{ fontSize:14, color:'#2563EB', fontWeight:700, display:'inline-block', transform: howOpen ? 'rotate(45deg)' : 'none', transition:'transform 0.18s' }}>+</span>
+            </button>
+            {howOpen && (
+              <div style={{ padding:'12px 14px 8px', background:'#F8FAFC', border:'1px solid #E2E8F0', borderTop:'none', borderRadius:'0 0 8px 8px', marginBottom:14 }}>
+                {[
+                  ['1','Log into your student portal','— same place you register for classes'],
+                  ['2','Look for Degree Audit, Degree Works, DARS, or MyDegreePlan',''],
+                  ['3','Download as PDF and drop it here',''],
+                ].map(([n,strong,rest]) => (
+                  <div key={n} style={{ display:'flex', alignItems:'flex-start', gap:10, marginBottom:8 }}>
+                    <div style={{ width:18, height:18, borderRadius:'50%', background:'#2563EB', color:'#fff', fontSize:10, fontWeight:800, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, marginTop:1 }}>{n}</div>
+                    <div style={{ fontSize:12, lineHeight:1.5 }}><strong>{strong}</strong> <span style={{ color:'#64748B' }}>{rest}</span></div>
+                  </div>
+                ))}
               </div>
-              <div style={{ fontSize: 12, color: '#999', marginBottom: 12 }}>Your official degree requirements and progress report</div>
-              <label style={{ display: 'inline-block', padding: '8px 14px', background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>
-                Upload PDF
-                <input type="file" accept=".pdf" onChange={(e) => handleFileUpload(e, 'degreeAudit')} style={{ display: 'none' }} />
-              </label>
-              {degreeAuditFileName
-                ? <div style={{ marginTop: 8, fontSize: 12, color: '#22a722' }}>✓ {degreeAuditFileName}</div>
-                : <textarea value={degreeAuditText} onChange={(e) => setDegreeAuditText(e.target.value)} placeholder="Or paste text here..." style={{ marginTop: 12, width: '100%', height: 80, padding: 8, fontSize: 12, border: '1px solid #eee', borderRadius: 6, resize: 'none', boxSizing: 'border-box' }} />
-              }
+            )}
+          </div>
+
+          {/* Drop zone */}
+          <div
+            style={{ border:dzBorder, borderRadius:12, padding:'24px 16px', textAlign:'center', cursor:'pointer', transition:'all 0.2s', marginBottom:14, position:'relative', overflow:'hidden', background:dzBg }}
+            onClick={() => fileInputRef.current?.click()}
+            onDragOver={e => e.preventDefault()}
+            onDrop={e => { e.preventDefault(); const f=e.dataTransfer.files?.[0]; if(f) handleFileUpload(f); }}
+          >
+            <div className={`scan-bar${scanning||degreeAuditFileName?' active':''}`} />
+            <svg width="36" height="40" viewBox="0 0 36 40" fill="none" style={{ margin:'0 auto 10px', display:'block', opacity: scanning ? 0.5 : 0.25, transition:'opacity 0.3s' }}>
+              <rect x="2" y="2" width="22" height="30" rx="3" stroke="#0F172A" strokeWidth="1.5" fill="#F8FAFC"/>
+              <path d="M18 2v9h8" stroke="#0F172A" strokeWidth="1.5"/>
+              <path d="M7 17h12M7 22h8" stroke="#0F172A" strokeWidth="1.5" strokeLinecap="round"/>
+              <circle cx="28" cy="33" r="7" fill="#2563EB" stroke="#0F172A" strokeWidth="1.5"/>
+              <path d="M28 30v6M25 33h6" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+            <div style={{ fontWeight:700, fontSize:14, marginBottom:3, color: scanning ? '#2563EB' : '#0F172A' }}>
+              {scanning ? `Scanning ${degreeAuditFileName}...` : degreeAuditFileName ? degreeAuditFileName : 'Drop your Degree Audit PDF here'}
             </div>
-
-            <div style={{ border: '1px dashed #ddd', borderRadius: 10, padding: 18, background: '#fff' }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
-                Transcript
-                <span style={{ marginLeft: 6, fontSize: 11, background: '#f5f5f5', color: '#666', padding: '1px 7px', borderRadius: 10, border: '1px solid #ddd' }}>Optional</span>
-              </div>
-              <div style={{ fontSize: 12, color: '#999', marginBottom: 12 }}>Skip if your degree audit already shows completed courses</div>
-              <label style={{ display: 'inline-block', padding: '8px 14px', background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>
-                Upload PDF
-                <input type="file" accept=".pdf" onChange={(e) => handleFileUpload(e, 'transcript')} style={{ display: 'none' }} />
-              </label>
-              {transcriptFileName
-                ? <div style={{ marginTop: 8, fontSize: 12, color: '#22a722' }}>✓ {transcriptFileName}</div>
-                : <textarea value={transcriptText} onChange={(e) => setTranscriptText(e.target.value)} placeholder="Or paste text here..." style={{ marginTop: 12, width: '100%', height: 80, padding: 8, fontSize: 12, border: '1px solid #eee', borderRadius: 6, resize: 'none', boxSizing: 'border-box' }} />
-              }
+            <div style={{ fontSize:12, color:'#64748B' }}>
+              {scanning ? 'Reading your degree audit — this takes a moment' : degreeAuditFileName ? 'Ready to analyze · click the button below' : 'or click to browse · Works with Degree Works, DARS, and most U.S. portals'}
             </div>
           </div>
 
+          <input ref={fileInputRef} type="file" accept=".pdf" style={{ display:'none' }} onChange={e => { const f=e.target.files?.[0]; if(f) handleFileUpload(f); }} />
+
+          {/* CTA button */}
           <button
             onClick={handleAnalyze}
-            disabled={loading || !degreeAuditText.trim()}
-            style={{
-              padding: '13px 28px', fontSize: 15, fontWeight: 700,
-              background: loading || !degreeAuditText.trim() ? '#aaa' : '#000',
-              color: '#fff', border: 'none', borderRadius: 10,
-              cursor: loading || !degreeAuditText.trim() ? 'not-allowed' : 'pointer',
-              letterSpacing: '-0.2px',
-            }}
+            disabled={ctaDisabled}
+            style={{ width:'100%', background: ctaDisabled ? '#93C5FD' : '#2563EB', color:'#fff', border:'none', borderRadius:10, padding:16, fontSize:15, fontWeight:800, cursor: ctaDisabled ? 'not-allowed' : 'pointer', boxShadow: ctaDisabled ? 'none' : '0 4px 14px rgba(37,99,235,0.3)', marginBottom:10, transition:'all 0.12s', fontFamily:'inherit' }}
           >
-            {loading ? 'Analyzing...' : 'Analyze my degree — Free'}
+            {loading ? 'Analyzing...' : scanning ? 'Scanning...' : 'Scan My Audit for Gaps — Free'}
           </button>
 
-          {error && <p style={{ color: 'red', marginTop: 16, fontSize: 14 }}>{error}</p>}
+          {error && <p style={{ color:'#E11D48', fontSize:13, marginBottom:10 }}>{error}</p>}
 
-          {analysis && (
-            <div style={{ marginTop: 40 }}>
-              <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 20, letterSpacing: '-0.4px' }}>Your Degree Analysis</h2>
+          <div style={{ display:'flex', justifyContent:'center', flexWrap:'wrap', gap:10, marginBottom:10 }}>
+            {[['Secure upload','shield'],['No account needed',''],['No credit card',''],['FERPA compliant','']].map(([label]) => (
+              <span key={label} style={{ fontSize:10, fontWeight:600, color:'#94A3B8', display:'flex', alignItems:'center', gap:4 }}>{label}</span>
+            ))}
+          </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
-                <div style={{ background: '#fff', border: '1px solid #eee', borderRadius: 10, padding: 16 }}>
-                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 500 }}>Credits completed</div>
-                  <div style={{ fontSize: 26, fontWeight: 700 }}>{analysis.summary?.creditsCompleted} / {analysis.summary?.creditsRequired}</div>
-                </div>
-                <div style={{ background: '#fff8f8', border: '1px solid #ffd0d0', borderRadius: 10, padding: 16 }}>
-                  <div style={{ fontSize: 11, color: '#c00', marginBottom: 4, fontWeight: 500 }}>Missing requirements</div>
-                  <div style={{ fontSize: 26, fontWeight: 700, color: '#c00' }}>{analysis.summary?.missingRequirementsCount}</div>
-                </div>
-                <div style={{ background: '#fffdf0', border: '1px solid #ffe98a', borderRadius: 10, padding: 16 }}>
-                  <div style={{ fontSize: 11, color: '#996600', marginBottom: 4, fontWeight: 500 }}>At-risk courses</div>
-                  <div style={{ fontSize: 26, fontWeight: 700, color: '#996600' }}>{analysis.summary?.atRiskCount}</div>
-                </div>
-              </div>
-
-              <div style={{ background: '#f0f7ff', borderRadius: 10, padding: 16, marginBottom: 20, border: '1px solid #d0e8ff' }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#0070f3', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>AI Summary</div>
-                <div style={{ fontSize: 14, color: '#334', lineHeight: 1.6 }}>{analysis.freeInsight}</div>
-              </div>
-
-              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.4px', color: '#444' }}>Missing courses (preview)</h3>
-              {analysis.missingCourses.slice(0, 2).map((course: any, i: number) => (
-                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: '#fff', border: '1px solid #eee', borderRadius: 8, marginBottom: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 500 }}>{course.code} — {course.name}</span>
-                  <span style={{ fontSize: 11, padding: '3px 9px', borderRadius: 10, fontWeight: 600, background: course.urgent ? '#ffe0e0' : '#eee', color: course.urgent ? '#c00' : '#666' }}>
-                    {course.urgent ? '⚠ Urgent' : 'Required'}
-                  </span>
-                </div>
-              ))}
-
-              {analysis.missingCourses.length > 2 && (
-                <div style={{ padding: '10px 14px', background: '#f9f9f9', borderRadius: 8, fontSize: 13, color: '#999', marginBottom: 20, border: '1px solid #eee' }}>
-                  + {analysis.missingCourses.length - 2} more courses hidden — upgrade to see full list
-                </div>
-              )}
-
-              <div style={{ border: '1px solid #0070f3', borderRadius: 12, padding: 24, background: '#f0f7ff' }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: '#003ea8', marginBottom: 6 }}>Want the full optimization plan?</div>
-                <div style={{ fontSize: 13, color: '#555', marginBottom: 16, lineHeight: 1.6 }}>
-                  Get your complete course list, prerequisite map, GPA impact analysis, and fastest path to graduation.
-                </div>
-                <button
-                  onClick={async () => {
-                    sessionStorage.setItem('degree_ai_paid_report', JSON.stringify({
-                      ...analysis,
-                      plan: 'basic',
-                      full_report: JSON.stringify(analysis),
-                      preview_text: analysis.freeInsight ?? '',
-                      file_name: degreeAuditFileName || 'Degree report',
-                    }));
-                    const res = await fetch('/api/checkout', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ plan: 'basic', analysisData: analysis }),
-                    });
-                    const data = await res.json();
-                    if (data.url) window.location.href = data.url;
-                  }}
-                  style={{ padding: '12px 24px', fontSize: 14, fontWeight: 700, background: '#000', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer' }}
-                >
-                  Get full plan — $19
-                </button>
-              </div>
-            </div>
-          )}
+          <div style={{ textAlign:'center', marginTop:4 }}>
+            <a href="/sample" style={{ fontSize:12, color:'#2563EB', fontWeight:600, textDecoration:'none', borderBottom:'1px solid #DBEAFE', paddingBottom:1 }}>
+              Not ready to upload? See a full sample report first →
+            </a>
+          </div>
         </div>
       </section>
 
-      {/* ── Footer ── */}
-      <footer style={{ padding: '32px 24px', textAlign: 'center', borderTop: '1px solid #eee' }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: '#000', marginBottom: 8 }}>
-          Degree<span style={{ color: '#0070f3' }}>AI</span>
-        </div>
-        <div style={{ fontSize: 12, color: '#aaa' }}>
-          © 2025 DegreeAI · Powered by Claude AI
-        </div>
-      </footer>
+      {/* SOCIAL PROOF */}
+      <div style={{ padding:'20px 24px', borderTop:'1px solid #E2E8F0', background:'#F8FAFC', display:'flex', alignItems:'center', justifyContent:'center', gap:20, flexWrap:'wrap' }}>
+        {[
+          ['10,000+','U.S. college students helped','with course planning'],
+          ['48h','Human advisor review','turnaround'],
+          ['$0','To get your full','AI diagnosis'],
+        ].map(([num,l1,l2],i) => (
+          <div key={num} style={{ display:'flex', alignItems:'center', gap:20 }}>
+            {i > 0 && <div style={{ width:1, height:36, background:'#E2E8F0' }} />}
+            <div style={{ textAlign:'center' }}>
+              <div style={{ fontSize:22, fontWeight:900, color:'#2563EB', letterSpacing:-1 }}>{num}</div>
+              <div style={{ fontSize:11, color:'#64748B', marginTop:2, lineHeight:1.4 }}>{l1}<br />{l2}</div>
+            </div>
+          </div>
+        ))}
+      </div>
 
-    </main>
+      {/* FOOTNOTE */}
+      <div style={{ fontSize:10, color:'#E2E8F0', textAlign:'center', padding:'8px 24px', background:'#F8FAFC' }}>
+        * NCES data: ~45% of U.S. students graduate within 4 years at 4-year institutions.
+      </div>
+
+      {/* TICKER */}
+      <div style={{ overflow:'hidden', padding:'11px 0', borderTop:'1px solid #E2E8F0', borderBottom:'1px solid #E2E8F0', background:'#fff' }}>
+        <div className="ticker-track">
+          {['Compatible with','Degree Works','·','DARS','·','MyDegreePlan','·','uAchieve','·','Stellic','·','Academica','·','and most U.S. university portals','·',
+            'Compatible with','Degree Works','·','DARS','·','MyDegreePlan','·','uAchieve','·','Stellic','·','Academica','·','and most U.S. university portals','·'].map((item,i) => (
+            <span key={i} style={{ fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:0.8, color: ['·','Compatible with','and most U.S. university portals'].includes(item) ? '#94A3B8' : '#2563EB', opacity: ['·','Compatible with','and most U.S. university portals'].includes(item) ? 1 : 0.7 }}>
+              {item}
+            </span>
+          ))}
+        </div>
+      </div>
+
+    </div>
   );
 }
